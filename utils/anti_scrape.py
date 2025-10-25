@@ -1,0 +1,1 @@
+# Content of anti_scrape.py
