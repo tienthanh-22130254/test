@@ -1,46 +1,65 @@
 import time
-
+import os
+import logging
 from bs4 import BeautifulSoup
 from selenium import webdriver
-from selenium.webdriver.ie.service import Service
+from selenium.webdriver.chrome.service import Service
+from selenium.common.exceptions import TimeoutException, WebDriverException
 from webdriver_manager.chrome import ChromeDriverManager
 from lxml import etree
 
 from src.service.AppException import AppException
 
+logger = logging.getLogger(__name__)
 
 class BaseCrawler:
     def __init__(self):
-        self.etree: etree
-        self.driver: webdriver
-        self.soup: BeautifulSoup
+        self.etree: etree = None
+        self.driver: webdriver.Chrome = None
+        self.soup: BeautifulSoup = None
+        self.page_timeout = int(os.getenv("CRAWLER_TIMEOUT", "30"))
 
     def setup_driver(self, headless=False, disable_resource=False):
-        # 8.1 Khởi tạo Chrome driver
-        chrome_options = webdriver.ChromeOptions()
+        try:
+            chrome_options = webdriver.ChromeOptions()
+            chrome_options.add_argument(
+                "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            )
+            chrome_options.add_argument("--disable-gpu")
+            chrome_options.add_argument("--no-sandbox")
+            chrome_options.add_argument("--disable-dev-shm-usage")
+            chrome_options.add_argument("--log-level=3")
 
-        # 8.2 Thêm các trọng số
-        chrome_options.add_argument(
-            "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/85.0.4183.121 Safari/537.36")
-        chrome_options.add_argument("--disable-gpu")  # Disable GPU rendering
-        chrome_options.add_argument("--no-sandbox")
-        chrome_options.add_argument("--log-level=3")
-        if headless:
-            chrome_options.add_argument("--headless")  # Run in headless mode (no browser UI)
-        service = Service(ChromeDriverManager().install())
-        if disable_resource:
-            chrome_options.add_argument("--blink-settings=imagesEnabled=false")
-            prefs = {
-                "profile.managed_default_content_settings.images": 2,  # Disable images
-                "profile.managed_default_content_settings.stylesheets": 2  # Disable CSS
-            }
-            chrome_options.add_experimental_option("prefs", prefs)
-        self.driver = webdriver.Chrome(service=service, options=chrome_options)
+            if headless:
+                chrome_options.add_argument("--headless=new")
+
+            if disable_resource:
+                chrome_options.add_argument("--blink-settings=imagesEnabled=false")
+                prefs = {
+                    "profile.managed_default_content_settings.images": 2,
+                    "profile.managed_default_content_settings.stylesheets": 2
+                }
+                chrome_options.add_experimental_option("prefs", prefs)
+
+            service = Service(ChromeDriverManager().install())
+            self.driver = webdriver.Chrome(service=service, options=chrome_options)
+            self.driver.set_page_load_timeout(self.page_timeout)
+            logger.info("Chrome driver initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to setup driver: {e}")
+            raise
 
     def get_url(self, url):
         if self.driver is None:
-            raise AppException(message="Driver not initialized. Call setup_driver() first.", )
-        self.driver.get(url)
+            raise AppException(message="Driver not initialized. Call setup_driver() first.")
+        try:
+            self.driver.get(url)
+        except TimeoutException:
+            logger.warning(f"Timeout loading URL: {url}")
+            raise
+        except WebDriverException as e:
+            logger.error(f"WebDriver error loading URL {url}: {e}")
+            raise
 
     def wait(self, seconds):
         time.sleep(seconds)
@@ -53,4 +72,11 @@ class BaseCrawler:
 
     def close(self):
         if self.driver:
-            self.driver.quit()
+            try:
+                self.driver.quit()
+                logger.info("Driver closed successfully")
+            except Exception as e:
+                logger.error(f"Error closing driver: {e}")
+
+    def __del__(self):
+        self.close()

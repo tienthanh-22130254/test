@@ -2,6 +2,7 @@ import json
 import logging
 import os.path
 import re
+import time
 from datetime import datetime
 
 from selenium.common import WebDriverException, NoSuchElementException
@@ -48,60 +49,45 @@ class PagingBase(BaseCrawler):
 
     # 7
     def handle(self) -> dict:
-        # 7.1 Thực hiện tạo cấu hình crawler(selenium) bằng hàm setup_driver (8)
         super().setup_driver(headless=True)
         try:
-            for (page) in range(1, 1 + self._limit_page):
-                # 7.2. Thực hiện gọi hàm crawl_page (12) để lấy danh sách các url item trong trang
+            for page in range(1, 1 + self._limit_page):
                 list_url = self.crawl_page(page)
-                # 7.3. Lấy 1 url item từ trong danh sách các item có trong trang
-                for (url) in list_url:
-                    # 7.4 Kiểm tra url có hợp lệ không
+                for url in list_url:
                     if not check_url_valid(url):
-                        # 7.4.1 Không hợp lệ
-                        break
-                    # 7.4.2 Hợp lệ
-                    # 7.5.thực hiện gọi hàm crawl_item để lấy các thông tin của item
-                    item_crawled = self.crawl_item(url, self._scenario)
-                    print(item_crawled)
-                    # 7.6.Thêm các thông tin lấy được vào danh sách
-                    self._list_item.append(item_crawled)
-            logging.info(self._list_item)
-            # 7.7 gọi hàm handle_success() đễ xử lý thành công
+                        logging.warning(f"Invalid URL skipped: {url}")
+                        continue
+                    item_crawled = self.crawl_item(url)
+                    if item_crawled:
+                        self._list_item.append(item_crawled)
+                    time.sleep(2)
+            logging.info(f"Crawled {len(self._list_item)} items")
             return self.handle_success()
-        except AppException | WebDriverException as e:
-            # 7.8 Gọi hàm handle_exception() để xử lý lỗi
+        except (AppException, WebDriverException) as e:
             return self.handle_exception(e)
+        finally:
+            self.close()
 
-    # 13
-    def crawl_item(self, url, scenario):
+    def crawl_item(self, url):
         try:
-            # 13.1 gọi request đến url chi tiết bất động sản
             self.get_url(url)
-
             logging.info(f"Visiting item: {url}")
-
-            self.wait(10)
+            self.wait(5)
             current_url = self.driver.current_url
 
-            # 13.2
             if current_url != url:
-                # 13.2.1 no -> trang bị chuyển hướng
+                logging.warning(f"URL redirected from {url} to {current_url}")
                 return None
-            # 13.2.2 hợp lệ
-            driver = self.driver.page_source
 
-            # Xóa các thẻ không cần thiết
+            driver = self.driver.page_source
             self.clean_html(driver)
             result = {}
 
-            # 13.4 Loop qua các thuộc tính trong scenario
-            for field_name, properties in scenario.items():
-                # 13.5 gọi hàm find_element_by_config (9)
+            for field_name, properties in self._scenario.items():
                 result[field_name] = self.find_element_by_config(properties)
-            # 13.6 Trả về dữ liệu đã trích xuất
             return result
         except WebDriverException as e:
+            logging.error(f"Error crawling item {url}: {e}")
             return None
 
     # 12
